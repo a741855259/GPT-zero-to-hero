@@ -99,9 +99,9 @@ class FeedForward(nn.Module):
     def __init__(self, n_embd):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(n_embd, n_embd),
+            nn.Linear(n_embd, 4 * n_embd),  # 论文中 512 -> 2048
             nn.ReLU(),
-            nn.Linear(4, n_embd),  # proj layer
+            nn.Linear(4 * n_embd, n_embd),  # proj layer
         )
 
     def forward(self, x):
