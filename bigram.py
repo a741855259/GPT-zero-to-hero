@@ -107,7 +107,7 @@ class FeedForward(nn.Module):
     def __init__(self, n_embd):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(n_embd, 4 * n_embd),  # 论文中 512 -> 2048
+            nn.Linear(n_embd, 4 * n_embd),  # FC/全连接层，论文中 512 -> 2048
             nn.ReLU(),
             nn.Linear(4 * n_embd, n_embd),  # proj layer
             # 防止模型过度依赖某些神经元（记忆特定模式），强迫每个神经元都学到有用的表示
@@ -130,8 +130,8 @@ class Block(nn.Module):
 
     def forward(self, x):
         # 与原论文不同，使用preNorm，而不是MHA或FFWD之后Norm
-        x = x + self.sa_heads(self.ln1(x))    # MHA Addtion
-        x = x + self.ffwd(self.ln2(x))        # FeedForward Addtion
+        x = x + self.sa_heads(self.ln1(x))    # Norm + MHA + Addtion
+        x = x + self.ffwd(self.ln2(x))        # Norm + FeedForward/MLP + Addtion
         return x    # (B,T,n_embd)
 
 
@@ -189,6 +189,8 @@ class BigramLanguageModel(nn.Module):
 
 model = BigramLanguageModel(vocab_size)
 m = model.to(device)
+# print the number of parameters in the model
+print(sum(p.numel() for p in m.parameters())/1e6, 'M parameters')
 
 # create a PyTorch optimizer
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
