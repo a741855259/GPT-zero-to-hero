@@ -86,7 +86,7 @@ class MultiHeadAttention(nn.Module):
     def __init__(self, num_heads, head_size):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
-        self.proj = nn.Linear(n_embd, n_embd)   # proj layer
+        self.proj = nn.Linear(n_embd, n_embd)   # proj layer: 把多头的结果做一次总结，而不是简单concat
 
     def forward(self, x):
         out = torch.concat([h(x) for h in self.heads], dim=-1) # (B,T,head_size * num_heads)
@@ -115,10 +115,13 @@ class Block(nn.Module):
         head_size = n_embd // n_head
         self.sa_heads = MultiHeadAttention(n_head, head_size)
         self.ffwd = FeedForward(n_embd)
+        self.ln1 = nn.LayerNorm(n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)
 
     def forward(self, x):
-        x = x + self.sa_heads(x)    # MHA Addtion
-        x = x + self.ffwd(x)        # FeedForward Addtion
+        # 与原论文不同，使用preNorm，而不是MHA或FFWD之后Norm
+        x = x + self.sa_heads(self.ln1(x))    # MHA Addtion
+        x = x + self.ffwd(self.ln2(x))        # FeedForward Addtion
         return x    # (B,T,n_embd)
 
 
