@@ -11,6 +11,7 @@ learning_rate = 1e-3
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 eval_iters = 200
 n_embd = 32
+dropout= 0.2
 # ------------
 
 torch.manual_seed(1337)
@@ -68,6 +69,7 @@ class Head(nn.Module):
         self.value = nn.Linear(n_embd, head_size, bias=False)
         self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
         self.head_size = head_size
+        self.dropout = nn.Dropout(self.dropout)
 
     def forward(self, x):
         B,T,C = x.shape
@@ -76,6 +78,8 @@ class Head(nn.Module):
         wei = q @ torch.transpose(k, -2, -1) * self.head_size**-0.5  # (B,T,T)
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
         wei = F.softmax(wei, -1)
+        # 防止模型过度依赖少数特定 token（如只盯着某个词做预测），强迫它学会从多个位置获取信息
+        wei = self.dropout(wei) # 随机禁用一些权重参与计算（丢弃某些Token间的连接），防止过拟合；eval时自动关闭
         v = self.value(x)   # (B,T,head_size)
         out = wei @ v       # (B,T,head_size)
         return out
@@ -87,10 +91,12 @@ class MultiHeadAttention(nn.Module):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
         self.proj = nn.Linear(n_embd, n_embd)   # proj layer: 把多头的结果做一次总结，而不是简单concat
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         out = torch.concat([h(x) for h in self.heads], dim=-1) # (B,T,head_size * num_heads)
-        out = self.proj(out)
+        # 防止模型过度依赖某个 Head（如只用语法 Head 而忽略语义 Head），强迫它均衡利用所有 Head
+        out = self.dropout(self.proj(out))
         return out
 
 
@@ -102,6 +108,8 @@ class FeedForward(nn.Module):
             nn.Linear(n_embd, 4 * n_embd),  # 论文中 512 -> 2048
             nn.ReLU(),
             nn.Linear(4 * n_embd, n_embd),  # proj layer
+            # 防止模型过度依赖某些神经元（记忆特定模式），强迫每个神经元都学到有用的表示
+            nn.Dropout(dropout)
         )
 
     def forward(self, x):
