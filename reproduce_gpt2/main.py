@@ -2,7 +2,7 @@ import torch
 from transformers import GPT2LMHeadModel
 from torch.nn import functional as F
 
-from model import GPT
+from model import GPT, GPTConfig
 
 
 def load_weight():
@@ -15,10 +15,16 @@ def load_weight():
 def generate():
     max_len = 30
     num_return_seqs = 5
+    device = "cpu"
+    if torch.cuda.is_available():
+        device = "cuda"
+    print(f"using device: {device}")
     
     model = GPT.from_pretrained('gpt2')
+    # Random weight
+    # model = GPT(GPTConfig())
     model.eval()
-    model.to('cuda')
+    model.to(device)
     print("didn't crach yet~")
     
     # input prefix tokens
@@ -27,7 +33,7 @@ def generate():
     tokens = enc.encode("Hello, I'm a llm,")
     tokens = torch.tensor(tokens, dtype=torch.long) # (8,)
     tokens = tokens.unsqueeze(0).repeat(num_return_seqs, 1) # (5, 8)
-    x = tokens.to('cuda')
+    x = tokens.to(device)
     
     # generate B = 5, T = 8
     torch.manual_seed(42)
