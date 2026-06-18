@@ -61,7 +61,34 @@ def generate():
         print(">", decoded)
 
 
+def train():
+    device = "cpu"
+    if torch.cuda.is_available():
+        device = "cuda"
+        
+    import tiktoken
+    enc = tiktoken.get_encoding('gpt2')
+    import os
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(script_dir, '..', 'input.txt')) as f:
+        text = f.read()
+    text = text[:1000]
+    tokens = enc.encode(text)
+    B, T = 4, 32
+    buf = torch.tensor(tokens[:B*T + 1])
+    buf = buf.to(device)
+    x = buf[:-1].view(B, T)
+    y = buf[1:].view(B, T)
+    # print(x)
+    # print(y)
+    
+    model = GPT(GPTConfig())
+    model.to(device)
+    logits, loss = model(x, y)
+    print(logits.shape)
+    print(loss)
+
 if __name__ == "__main__":
     # load_weight()
-    generate()
-
+    # generate()
+    train()
