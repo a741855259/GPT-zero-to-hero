@@ -84,9 +84,15 @@ def train():
     
     model = GPT(GPTConfig())
     model.to(device)
-    logits, loss = model(x, y)
-    print(logits.shape)
-    print(loss)
+    
+    # optimizer
+    optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
+    for i in range(50):
+        optimizer.zero_grad()
+        logits, loss = model(x, y)
+        loss.backward()
+        optimizer.step()
+        print(f'step {i}, loss: {loss.item()}')
 
 if __name__ == "__main__":
     # load_weight()
