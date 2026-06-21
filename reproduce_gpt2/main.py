@@ -3,6 +3,7 @@ from transformers import GPT2LMHeadModel
 from torch.nn import functional as F
 
 from model import GPT, GPTConfig
+from data_loader import DataLoaderLite
 
 
 def load_weight():
@@ -66,21 +67,8 @@ def train():
     if torch.cuda.is_available():
         device = "cuda"
         
-    import tiktoken
-    enc = tiktoken.get_encoding('gpt2')
-    import os
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(script_dir, '..', 'input.txt')) as f:
-        text = f.read()
-    text = text[:1000]
-    tokens = enc.encode(text)
     B, T = 4, 32
-    buf = torch.tensor(tokens[:B*T + 1])
-    buf = buf.to(device)
-    x = buf[:-1].view(B, T)
-    y = buf[1:].view(B, T)
-    # print(x)
-    # print(y)
+    dl = DataLoaderLite(B, T)
     
     model = GPT(GPTConfig())
     model.to(device)
@@ -89,6 +77,8 @@ def train():
     optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
     for i in range(50):
         optimizer.zero_grad()
+        x, y = dl.next_batch()
+        x, y = x.to(device), y.to(device)
         logits, loss = model(x, y)
         loss.backward()
         optimizer.step()
