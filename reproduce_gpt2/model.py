@@ -26,6 +26,26 @@ class GPT(nn.Module):
             ln_f = nn.LayerNorm(config.n_embd)
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        # 按照GPT2的实现，wte和lm_head共享权重
+        self.transformer.wte.weight = self.lm_head.weight
+        
+        self.apply(self._init_weights)
+        # apply special scaled init to the residual projections, per GPT-2 paper
+        # 随着层数增加，残差流中的方差会不断累积——每加一条分支，方差就增长一点。
+        # 如果不缩放，深层模型的输出方差会远大于输入方差，导致训练不稳定
+        for pn, p in self.named_parameters():
+            if pn.endswith('c_proj.weight'):
+                # 2*n_layer: 其中2是因为每个Block包含两个残差连接
+                torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
+
+    def _init_weights(self, module):
+        # 按照GPT2的实现初始化权重
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
         
     def forward(self, idx, target=None):
         device = idx.device

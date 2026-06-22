@@ -64,9 +64,12 @@ def generate():
 
 def train():
     device = "cpu"
+    torch.manual_seed(1337)
     if torch.cuda.is_available():
         device = "cuda"
-        
+        torch.cuda.manual_seed(1337)
+    print(f"using device: {device}")
+    
     B, T = 4, 32
     dl = DataLoaderLite(B, T)
     
