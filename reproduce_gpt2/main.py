@@ -88,7 +88,7 @@ def train():
     model = torch.compile(model)
     
     # optimizer
-    optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8)
     for i in range(50):
         t0 = time.time()
         optimizer.zero_grad()
@@ -108,13 +108,22 @@ def train():
             #   >>> model.transformer.wte.weight.dtype
             #   torch.float32
         loss.backward()
+        # clip_grad_norm_作用是梯度裁剪（Gradient Clipping），防止梯度爆炸
+        # 具体机制
+        #   1. 计算所有参数梯度的 L2范数（即所有梯度平方和的平方根）
+        #   2. 如果范数 > max_norm=1.0，将所有梯度等比例缩放，使缩放后的范数恰好等于1.0
+        #   3. 如果范数 ≤ 1.0，不做任何操作
+        # 函数返回值 norm 是裁剪前的梯度范数，可以用来监控训练是否稳定。
+        # Transformer训练中容易出现梯度爆炸——某些step的梯度突然变得极大，导致参数更新幅度过ss大，
+        # 模型崩溃（loss飙升）。梯度裁剪给了一个安全上限，确保单次更新的步长不会超过阈值。
+        norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         # Metrics
         torch.cuda.synchronize()    # wait for the GPU to finish work
         t1 = time.time()
         dt = (t1-t0)*1000
         tokens_per_sec = (B*T)/(t1-t0)
-        print(f'step {i}, loss: {loss.item()}, dt: {dt:.2f}ms, tok/sec: {tokens_per_sec:.2f}')
+        print(f'step {i} | loss: {loss.item()} | norm: {norm:.4f} | dt: {dt:.2f}ms | tok/sec: {tokens_per_sec:.2f}')
 
 if __name__ == "__main__":
     # load_weight()
