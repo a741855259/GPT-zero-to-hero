@@ -61,6 +61,29 @@ def generate():
         decoded = enc.decode(tokens)
         print(">", decoded)
 
+import math
+learning_rate = 6e-4
+min_lr = learning_rate * 0.1
+warmup_iters = 10
+lr_decay_iters = 50
+
+# GPT-2/3训练细节
+## learning rate decay scheduler (cosine with warmup)
+def get_lr(it):
+    # 1) linear warmup for warmup_iters steps
+    if it < warmup_iters:
+        return learning_rate * (it + 1) / (warmup_iters + 1)
+    # 2) if it > lr_decay_iters, return min learning rate
+    if it > lr_decay_iters:
+        return min_lr
+    # 3) in between, use cosine decay down to min learning rate
+    decay_ratio = (it - warmup_iters) / (lr_decay_iters - warmup_iters)
+    assert 0 <= decay_ratio <= 1
+    coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff ranges 0..1
+    return min_lr + coeff * (learning_rate - min_lr)
+
+## BatchSize在初始时小，逐渐增大 (未实现)。因为一开始学习的东西差不多，丢任何数据loss都很大
+## 不重复Sample数据，直到下一个epoch。最小化过拟合
 
 def train():
     device = "cpu"
@@ -88,8 +111,15 @@ def train():
     model = torch.compile(model)
     
     # optimizer
-    optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8)
-    for i in range(50):
+    # optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8)
+    
+    # weight_decay: 防止权重矩阵过拟合，又保护了bias和LayerNorm的正常功能
+    # FusedAdamW: AdamW更新每个参数需要：读4个tensor（weight、grad、m、v），写3个tensor（weight、m、v）。
+    # 对于一个有数千个参数的GPT模型，普通AdamW要启动数千个小kernel，每个都有launch开销和内存读写开销。
+    # Fused版把这些全部打包成一个kernel，减少GPU kernel launch开销和内存往返次数。
+    optimizer = model.configure_optimizers(weight_decay=0.1, learning_rate=6e-4, betas=(0.9, 0.95), 
+                                           device_type=device)
+    for step in range(lr_decay_iters):
         t0 = time.time()
         optimizer.zero_grad()
         x, y = dl.next_batch()
@@ -117,13 +147,19 @@ def train():
         # Transformer训练中容易出现梯度爆炸——某些step的梯度突然变得极大，导致参数更新幅度过ss大，
         # 模型崩溃（loss飙升）。梯度裁剪给了一个安全上限，确保单次更新的步长不会超过阈值。
         norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        
+        # determine and set the learning rate for this iteration
+        lr = get_lr(step)
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
+            
         optimizer.step()
         # Metrics
         torch.cuda.synchronize()    # wait for the GPU to finish work
         t1 = time.time()
         dt = (t1-t0)*1000
         tokens_per_sec = (B*T)/(t1-t0)
-        print(f'step {i} | loss: {loss.item()} | norm: {norm:.4f} | dt: {dt:.2f}ms | tok/sec: {tokens_per_sec:.2f}')
+        print(f'step {step} | loss: {loss.item()} | lr: {lr:.4f} | norm: {norm:.4f} | dt: {dt:.2f}ms | tok/sec: {tokens_per_sec:.2f}')
 
 if __name__ == "__main__":
     # load_weight()
