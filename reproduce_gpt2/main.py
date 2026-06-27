@@ -94,8 +94,10 @@ def train():
     print(f"using device: {device}")
     
     import time
-    B, T = 16, 128
+    total_batch_size = 2**19    # 0.5M
+    B, T = 16, 128              # micro_batch_size
     dl = DataLoaderLite(B, T)
+    grad_accum_steps = total_batch_size // (B * T)
     # 优化1: GPU(A100)默认FP32(8+23 bit)，改为TF32(8+10 bit)
     # 问题: 实际吞吐的收益没有达到8X的预期，因为Memory Bound
     torch.set_float32_matmul_precision('high')
@@ -122,22 +124,27 @@ def train():
     for step in range(lr_decay_iters):
         t0 = time.time()
         optimizer.zero_grad()
-        x, y = dl.next_batch()
-        x, y = x.to(device), y.to(device)
-        # 优化点2: 使用低精度bf16(8+7)权重参数
-        # 问题: 没有用float16(fp16 5+10), 因为FP16 (5+10) 的5位指数导致动态范围太小，最大值仅约65500。
-        #   训练中梯度很容易溢出（overflow）或下溢（underflow），必须配合 torch.cuda.amp.GradScaler
-        #   来缩放梯度——先放大梯度防溢出，反向传播后再缩回来再更新权重。
-        #   BF16 (8+7) 的8位指数与FP32相同，动态范围和FP32一致，梯度不会轻易溢出/下溢
-        with torch.autocast(device_type=device, dtype=torch.bfloat16):
-            logits, loss = model(x, y)
-            # 部分权重被自动转为bf16(主要是mutmal)，像softmax等操作受精度影响较大，pytorch没有转换
-            # import code; code.interact(local=locals())
-            #   >>> logits.dtype
-            #   torch.bfloat16
-            #   >>> model.transformer.wte.weight.dtype
-            #   torch.float32
-        loss.backward()
+        loss_accum = 0.0
+        
+        for micro_step in range(grad_accum_steps):
+            x, y = dl.next_batch()
+            x, y = x.to(device), y.to(device)
+            # 优化点2: 使用低精度bf16(8+7)权重参数
+            # 问题: 没有用float16(fp16 5+10), 因为FP16 (5+10) 的5位指数导致动态范围太小，最大值仅约65500。
+            #   训练中梯度很容易溢出（overflow）或下溢（underflow），必须配合 torch.cuda.amp.GradScaler
+            #   来缩放梯度——先放大梯度防溢出，反向传播后再缩回来再更新权重。
+            #   BF16 (8+7) 的8位指数与FP32相同，动态范围和FP32一致，梯度不会轻易溢出/下溢
+            with torch.autocast(device_type=device, dtype=torch.bfloat16):
+                logits, loss = model(x, y)
+                # 部分权重被自动转为bf16(主要是mutmal)，像softmax等操作受精度影响较大，pytorch没有转换
+                # import code; code.interact(local=locals())
+                #   >>> logits.dtype
+                #   torch.bfloat16
+                #   >>> model.transformer.wte.weight.dtype
+                #   torch.float32
+            loss = loss / grad_accum_steps  # why?
+            loss_accum += loss.detach()
+            loss.backward()
         # clip_grad_norm_作用是梯度裁剪（Gradient Clipping），防止梯度爆炸
         # 具体机制
         #   1. 计算所有参数梯度的 L2范数（即所有梯度平方和的平方根）
@@ -157,9 +164,10 @@ def train():
         # Metrics
         torch.cuda.synchronize()    # wait for the GPU to finish work
         t1 = time.time()
-        dt = (t1-t0)*1000
-        tokens_per_sec = (B*T)/(t1-t0)
-        print(f'step {step} | loss: {loss.item()} | lr: {lr:.4f} | norm: {norm:.4f} | dt: {dt:.2f}ms | tok/sec: {tokens_per_sec:.2f}')
+        dt = t1-t0
+        tokens_processed = B * T * grad_accum_steps
+        tokens_per_sec = tokens_processed/dt
+        print(f'step {step} | loss: {loss_accum.item():.6f} | lr: {lr:.4f} | norm: {norm:.4f} | tok/sec: {tokens_per_sec:.2f}')
 
 if __name__ == "__main__":
     # load_weight()
